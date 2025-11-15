@@ -14,12 +14,12 @@ type mockContext struct {
 	index  int
 }
 
-func (m *mockContext) Locale() string                        { return m.locale }
-func (m *mockContext) Seed() int64                           { return m.seed }
-func (m *mockContext) Index() int                            { return m.index }
+func (m *mockContext) Locale() string                           { return m.locale }
+func (m *mockContext) Seed() int64                              { return m.seed }
+func (m *mockContext) Index() int                               { return m.index }
 func (m *mockContext) GetField(name string) (interface{}, bool) { return nil, false }
-func (m *mockContext) GetStruct() interface{}                { return nil }
-func (m *mockContext) FieldName() string                     { return "" }
+func (m *mockContext) GetStruct() interface{}                   { return nil }
+func (m *mockContext) FieldName() string                        { return "" }
 
 func newMockContext(index int) Context {
 	return &mockContext{

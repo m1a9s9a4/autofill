@@ -8,7 +8,7 @@ import (
 )
 
 type User struct {
-	ID       int64  `autofill:"seq"`
+	ID       int64 `autofill:"seq"`
 	Name     string
 	Email    string `autofill:"email"`
 	Age      int    `autofill:"min=18,max=65"`

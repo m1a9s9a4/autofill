@@ -85,6 +85,43 @@ af := autofill.New().
 af.Fill(&user)
 ```
 
+### Default Values for Specialized Fillers
+
+Use `WithDefaults()` to create specialized fillers for different user types, teams, or contexts. This is especially useful when you need to create multiple groups with different default values:
+
+```go
+// Create separate fillers for admins and members
+adminFiller := autofill.New().WithDefaults(autofill.Override{
+    "Role":        "admin",
+    "Permissions": "all",
+    "WorkspaceID": int64(1000),
+})
+
+memberFiller := autofill.New().WithDefaults(autofill.Override{
+    "Role":        "member",
+    "Permissions": "read",
+    "WorkspaceID": int64(1000),
+})
+
+// Now you can fill without repeating the defaults
+admins := make([]User, 3)
+adminFiller.FillSlice(&admins)  // All have Role="admin"
+
+members := make([]User, 10)
+memberFiller.FillSlice(&members)  // All have Role="member"
+
+// You can still override defaults when needed
+memberFiller.FillSlice(&specialMembers, autofill.Override{
+    "Permissions": "write",  // Override the default "read"
+})
+```
+
+**Benefits:**
+- **Avoid repetition**: Set defaults once, use multiple times
+- **Clear intent**: Each filler represents a specific type of data
+- **Easy testing**: Create different test scenarios with dedicated fillers
+- **Maintainable**: Change defaults in one place
+
 ### Override Values
 
 Override specific field values:
@@ -97,18 +134,40 @@ autofill.Fill(&user, autofill.Override{
 })
 ```
 
-### Sequence Values
+### Fixed and Sequential Values
 
-Generate sequential values for slices:
+When filling slices, you can use both **fixed values** (same for all elements) and **sequential values** (different for each element):
 
 ```go
 users := make([]User, 5)
 autofill.FillSlice(&users, autofill.Override{
+    // Sequential values (different for each element)
     "Email": autofill.Seq("user%d@example.com"),  // user0@, user1@, ...
     "Age":   autofill.SeqInt(20),                  // 20, 21, 22, ...
     "ID":    autofill.SeqInt64(1000),              // 1000, 1001, 1002, ...
+
+    // Fixed values (same for all elements)
+    "WorkspaceID": int64(12345),                   // All users: 12345
+    "TeamID":      "engineering",                  // All users: "engineering"
+    "Role":        "developer",                    // All users: "developer"
 })
+
+// Result:
+// users[0]: ID=1000, Email=user0@example.com, Age=20, WorkspaceID=12345, TeamID="engineering"
+// users[1]: ID=1001, Email=user1@example.com, Age=21, WorkspaceID=12345, TeamID="engineering"
+// users[2]: ID=1002, Email=user2@example.com, Age=22, WorkspaceID=12345, TeamID="engineering"
+// ...
 ```
+
+**Override Types:**
+
+| Type | Behavior | Example |
+|------|----------|---------|
+| Direct value | Same value for all elements | `"WorkspaceID": 12345` |
+| `Seq(format)` | Sequential strings | `Seq("user%d@example.com")` |
+| `SeqInt(start)` | Sequential integers | `SeqInt(100)` → 100, 101, 102... |
+| `SeqInt64(start)` | Sequential int64 | `SeqInt64(1000)` → 1000, 1001... |
+| `Random(min, max)` | Index-based range | `Random(1, 100)` |
 
 ### Struct Tags
 
@@ -140,6 +199,49 @@ type User struct {
 | `oneof=a\|b\|c` | Choose from options | `autofill:"oneof=active\|inactive"` |
 | `rule=name` | Use custom rule | `autofill:"rule=myRule"` |
 | `-` | Skip field | `autofill:"-"` |
+
+### Type Safety
+
+autofill enforces type safety to prevent unexpected behavior:
+
+```go
+type User struct {
+    ID   string  // UUID field (string type)
+    Age  int
+}
+
+// ✅ Correct types - works fine
+autofill.Fill(&user, autofill.Override{
+    "ID":  "custom-uuid-12345",  // string -> string: OK
+    "Age": 30,                    // int -> int: OK
+})
+
+// ❌ Type mismatch - returns error
+autofill.Fill(&user, autofill.Override{
+    "ID": int64(12345),  // int64 -> string: ERROR!
+})
+// Error: cannot set field of type string with value of type int64
+```
+
+**Type Conversion Rules:**
+
+| From → To | Allowed? | Note |
+|-----------|----------|------|
+| `string` → `string` | ✅ Yes | Direct match |
+| `int` → `int64` | ✅ Yes | Numeric conversion |
+| `float32` → `float64` | ✅ Yes | Numeric conversion |
+| `int64` → `string` | ❌ No | Would become Unicode character |
+| `string` → `int` | ❌ No | Not automatically parseable |
+
+**Why this matters:**
+
+```go
+// Without type safety, this could happen:
+Override{"ID": int64(12345)}  // → "〹" (Unicode U+3039)
+// Instead, autofill returns an error to prevent bugs!
+```
+
+See [examples/type_safety](examples/type_safety/main.go) for more examples.
 
 ### Custom Rules
 
@@ -180,6 +282,53 @@ func main() {
     af.Fill(&task)
 }
 ```
+
+### Integration with Ent and Other ORMs
+
+**You don't need to define types!** Use your existing structs from Ent, GORM, or any other ORM:
+
+```go
+import "your-project/ent"
+
+// ✅ Use Ent-generated structs directly
+func TestCreateUser(t *testing.T) {
+    var user ent.User  // No need to define your own type!
+    autofill.Fill(&user, autofill.Override{
+        "Email": "test@example.com",
+    })
+
+    // Save to database
+    created, err := client.User.Create().
+        SetName(user.Name).
+        SetEmail(user.Email).
+        SetAge(user.Age).
+        Save(ctx)
+}
+
+// ✅ Create test data helpers
+func CreateTestUser(t *testing.T) *ent.User {
+    var user ent.User
+    autofill.Fill(&user)
+    return &user
+}
+
+// ✅ Role-specific fillers
+adminFiller := autofill.New().WithDefaults(autofill.Override{
+    "Role": "admin",
+    "TenantID": int64(1000),
+})
+
+var admins []ent.User = make([]ent.User, 5)
+adminFiller.FillSlice(&admins)
+```
+
+**Benefits:**
+- ✅ Works with any struct (Ent, GORM, Bun, sqlc, etc.)
+- ✅ No duplicate type definitions
+- ✅ Maintains type safety
+- ✅ Perfect for testing and seeding
+
+See [examples/ent_integration](examples/ent_integration) for complete examples.
 
 ### Testing
 
@@ -237,7 +386,11 @@ The package includes several built-in rules accessible via tags or the rules API
 See the [examples](examples/) directory for complete examples:
 
 - [Basic Usage](examples/basic/main.go) - Basic filling and overrides
+- [Ent Integration](examples/ent_integration) - Using with Ent (or any ORM) - no type definitions needed!
+- [User Roles](examples/user_roles/main.go) - Using WithDefaults for different user types
+- [Type Safety](examples/type_safety/main.go) - Understanding type safety and conversions
 - [Custom Rules](examples/custom_rules/main.go) - Creating custom rules
+- [Fixed Values](examples/fixed_values/main.go) - Using fixed and sequential values together
 - [Testing](examples/testing/user_test.go) - Using autofill in tests
 
 ## API Documentation
@@ -254,6 +407,7 @@ func New() *Autofill
 func (a *Autofill) WithLocale(locale string) *Autofill
 func (a *Autofill) WithSeed(seed int64) *Autofill
 func (a *Autofill) WithRules(rules *RuleSet) *Autofill
+func (a *Autofill) WithDefaults(defaults Override) *Autofill
 
 // Fill structs
 func (a *Autofill) Fill(v interface{}, overrides ...Override) error

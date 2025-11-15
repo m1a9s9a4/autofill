@@ -32,7 +32,7 @@ func (r *PriorityRule) Validate(v interface{}) error {
 }
 
 type Task struct {
-	ID       int64  `autofill:"seq"`
+	ID       int64 `autofill:"seq"`
 	Title    string
 	Status   string `autofill:"rule=status"`
 	Priority string `autofill:"rule=priority"`

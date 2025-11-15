@@ -33,10 +33,11 @@ import (
 // Autofill is the main struct for generating test data.
 // Create an instance using New() and configure it with With* methods.
 type Autofill struct {
-	locale string
-	seed   int64
-	rules  *rules.RuleSet
-	rand   *rand.Rand
+	locale   string
+	seed     int64
+	rules    *rules.RuleSet
+	rand     *rand.Rand
+	defaults Override
 }
 
 // New creates a new Autofill instance with default settings.
@@ -73,6 +74,22 @@ func (a *Autofill) WithRules(ruleSet *rules.RuleSet) *Autofill {
 	return a
 }
 
+// WithDefaults sets default override values that will be applied to all Fill operations.
+// These defaults are merged with any overrides passed to Fill/FillSlice,
+// with the passed overrides taking precedence.
+//
+// This is useful for creating specialized fillers for different user types:
+//
+//	adminFiller := autofill.New().WithDefaults(autofill.Override{
+//	    "Role":        "admin",
+//	    "Permissions": "all",
+//	})
+//	adminFiller.FillSlice(&admins) // All will have Role="admin"
+func (a *Autofill) WithDefaults(defaults Override) *Autofill {
+	a.defaults = defaults
+	return a
+}
+
 // Fill populates the fields of a struct with generated test data.
 // The input must be a pointer to a struct.
 // Optional overrides can be provided to set specific field values.
@@ -102,8 +119,8 @@ func (a *Autofill) FillWithIndex(v interface{}, index int, overrides ...Override
 		return fmt.Errorf("Fill requires a pointer to struct, got pointer to %s", elem.Kind())
 	}
 
-	// Merge overrides
-	override := mergeOverrides(overrides)
+	// Merge overrides (defaults < passed overrides)
+	override := a.mergeWithDefaults(overrides)
 
 	// Create context
 	ctx := newContext(a.locale, a.seed, index, a.rand)
@@ -212,6 +229,32 @@ func mergeOverrides(overrides []Override) Override {
 	return merged
 }
 
+// mergeWithDefaults merges the defaults with the provided overrides.
+// Priority: defaults < passed overrides (passed overrides take precedence)
+func (a *Autofill) mergeWithDefaults(overrides []Override) Override {
+	if a.defaults == nil && len(overrides) == 0 {
+		return nil
+	}
+
+	merged := make(Override)
+
+	// First, apply defaults
+	if a.defaults != nil {
+		for k, v := range a.defaults {
+			merged[k] = v
+		}
+	}
+
+	// Then, apply passed overrides (these take precedence)
+	for _, override := range overrides {
+		for k, v := range override {
+			merged[k] = v
+		}
+	}
+
+	return merged
+}
+
 // setFieldValue sets a reflect.Value with the given value, handling type conversions.
 func setFieldValue(field reflect.Value, value interface{}) error {
 	if value == nil {
@@ -221,31 +264,70 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 	valReflect := reflect.ValueOf(value)
 	fieldType := field.Type()
 
-	// Handle pointer types
-	if fieldType.Kind() == reflect.Ptr {
-		if valReflect.Type().ConvertibleTo(fieldType.Elem()) {
-			ptr := reflect.New(fieldType.Elem())
-			ptr.Elem().Set(valReflect.Convert(fieldType.Elem()))
-			field.Set(ptr)
-			return nil
-		}
-		if valReflect.Type() == fieldType {
-			field.Set(valReflect)
-			return nil
-		}
-	}
-
 	// Direct assignment if types match
 	if valReflect.Type() == fieldType {
 		field.Set(valReflect)
 		return nil
 	}
 
-	// Try conversion
-	if valReflect.Type().ConvertibleTo(fieldType) {
+	// Handle pointer types
+	if fieldType.Kind() == reflect.Ptr {
+		if valReflect.Type() == fieldType {
+			field.Set(valReflect)
+			return nil
+		}
+		if isSafeConversion(valReflect.Kind(), fieldType.Elem().Kind()) &&
+			valReflect.Type().ConvertibleTo(fieldType.Elem()) {
+			ptr := reflect.New(fieldType.Elem())
+			ptr.Elem().Set(valReflect.Convert(fieldType.Elem()))
+			field.Set(ptr)
+			return nil
+		}
+	}
+
+	// Check if conversion is safe before attempting
+	if isSafeConversion(valReflect.Kind(), fieldType.Kind()) &&
+		valReflect.Type().ConvertibleTo(fieldType) {
 		field.Set(valReflect.Convert(fieldType))
 		return nil
 	}
 
 	return fmt.Errorf("cannot set field of type %s with value of type %T", fieldType, value)
+}
+
+// isSafeConversion checks if converting from srcKind to dstKind is safe and meaningful.
+// It prevents unsafe conversions like int to string (which would interpret the int as a Unicode code point).
+func isSafeConversion(srcKind, dstKind reflect.Kind) bool {
+	// Prevent numeric to string conversions (int -> string would be interpreted as Unicode)
+	if isNumericKind(srcKind) && dstKind == reflect.String {
+		return false
+	}
+
+	// Prevent string to numeric conversions
+	if srcKind == reflect.String && isNumericKind(dstKind) {
+		return false
+	}
+
+	// Allow conversions between numeric types
+	if isNumericKind(srcKind) && isNumericKind(dstKind) {
+		return true
+	}
+
+	// Allow same kind conversions
+	if srcKind == dstKind {
+		return true
+	}
+
+	return true
+}
+
+// isNumericKind checks if a kind represents a numeric type.
+func isNumericKind(k reflect.Kind) bool {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
 }
