@@ -236,23 +236,14 @@ func (a *Autofill) mergeWithDefaults(overrides []Override) Override {
 		return nil
 	}
 
-	merged := make(Override)
-
-	// First, apply defaults
+	// Prepend defaults to overrides so they have lower priority
+	allOverrides := make([]Override, 0, len(overrides)+1)
 	if a.defaults != nil {
-		for k, v := range a.defaults {
-			merged[k] = v
-		}
+		allOverrides = append(allOverrides, a.defaults)
 	}
+	allOverrides = append(allOverrides, overrides...)
 
-	// Then, apply passed overrides (these take precedence)
-	for _, override := range overrides {
-		for k, v := range override {
-			merged[k] = v
-		}
-	}
-
-	return merged
+	return mergeOverrides(allOverrides)
 }
 
 // setFieldValue sets a reflect.Value with the given value, handling type conversions.

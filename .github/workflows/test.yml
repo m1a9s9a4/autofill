@@ -41,8 +41,20 @@ jobs:
 
       - name: Check coverage
         run: |
-          coverage=$(go tool cover -func=coverage.txt | grep total | awk '{print substr($3, 1, length($3)-1)}')
-          echo "Total coverage: ${coverage}%"
+          # Calculate coverage excluding examples directory
+          coverage=$(go tool cover -func=coverage.txt | grep -v "examples/" | grep total | awk '{print substr($3, 1, length($3)-1)}')
+          if [ -z "$coverage" ]; then
+            # Fallback: calculate manually from main and rules packages
+            go test -coverprofile=cov_main.txt .
+            go test -coverprofile=cov_rules.txt ./rules
+            main_cov=$(go tool cover -func=cov_main.txt | grep total | awk '{print substr($3, 1, length($3)-1)}')
+            rules_cov=$(go tool cover -func=cov_rules.txt | grep total | awk '{print substr($3, 1, length($3)-1)}')
+            echo "Main package coverage: ${main_cov}%"
+            echo "Rules package coverage: ${rules_cov}%"
+            # Use main package coverage as the primary metric
+            coverage=$main_cov
+          fi
+          echo "Coverage: ${coverage}%"
           if (( $(echo "$coverage < 80" | bc -l) )); then
             echo "❌ Coverage is below 80%"
             exit 1

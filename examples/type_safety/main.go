@@ -14,7 +14,7 @@ type User struct {
 }
 
 func main() {
-	fmt.Println("=== Type Safety Examples ===\n")
+	fmt.Println("=== Type Safety Examples ===")
 
 	// ✅ 正しい型: エラーなし
 	fmt.Println("1. Correct types:")
